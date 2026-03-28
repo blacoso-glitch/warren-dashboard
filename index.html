@@ -1,0 +1,577 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Warren Dashboard</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/recharts/2.8.0/Recharts.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #07050f; font-family: 'JetBrains Mono', monospace; }
+    ::-webkit-scrollbar { width: 3px; height: 3px; }
+    ::-webkit-scrollbar-track { background: #07050f; }
+    ::-webkit-scrollbar-thumb { background: #1c1830; border-radius: 3px; }
+  </style>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel">
+const { useState, useEffect, useMemo, useRef } = React;
+
+// Storage usando localStorage (persiste entre sesiones)
+const storage = {
+  get: (key) => { try { const v = localStorage.getItem(key); return v ? { value: v } : null; } catch(e){ return null; } },
+  set: (key, value) => { try { localStorage.setItem(key, value); } catch(e){} },
+};
+
+// ─── COLORES ────────────────────────────────────────────────────────────────
+const C = {
+  bg:"#07050f", panel:"#0d0b18", panel2:"#110f1e",
+  border:"#1c1830", border2:"#130f22",
+  green:"#4ade80", blue:"#60a5fa", gold:"#fbbf24",
+  red:"#f87171",   purple:"#c084fc",
+  muted:"#4a4060", text:"#9d8fc0", bright:"#e2d9f3", dim:"#2d2545",
+};
+
+// ─── MERCADO ────────────────────────────────────────────────────────────────
+const MARKET = [
+  { t:"AMAT",  nombre:"Applied Materials", px:373.34, rs:99.6, w:89, rsi:58, vr:0.44, drs:8.3,  g:"Semis"   },
+  { t:"JNJ",   nombre:"Johnson & Johnson", px:239.63, rs:96.4, w:87, rsi:44, vr:0.37, drs:0.4,  g:"Salud"   },
+  { t:"MRK",   nombre:"Merck & Co.",       px:118.84, rs:98.8, w:86, rsi:56, vr:0.50, drs:3.1,  g:"Salud"   },
+  { t:"MRNA",  nombre:"Moderna",           px:53.61,  rs:95.2, w:86, rsi:51, vr:0.36, drs:5.7,  g:"Salud"   },
+  { t:"RTX",   nombre:"Raytheon",          px:128.50, rs:98.8, w:84, rsi:55, vr:0.59, drs:6.2,  g:"Defensa" },
+  { t:"MRVL",  nombre:"Marvell Tech",      px:96.94,  rs:98.4, w:82, rsi:62, vr:0.67, drs:9.2,  g:"Semis"   },
+  { t:"WMT",   nombre:"Walmart",           px:98.20,  rs:98.8, w:82, rsi:63, vr:0.68, drs:2.1,  g:"Consumo" },
+  { t:"VIST",  nombre:"Vista Energy",      px:44.80,  rs:99.6, w:85, rsi:73, vr:0.41, drs:31.7, g:"ADR ARG" },
+  { t:"XOM",   nombre:"Exxon Mobil",       px:156.13, rs:99.6, w:80, rsi:61, vr:1.04, drs:0.0,  g:"Energía" },
+  { t:"CVX",   nombre:"Chevron",           px:148.20, rs:99.6, w:78, rsi:71, vr:1.28, drs:8.3,  g:"Energía" },
+  { t:"SHEL",  nombre:"Shell",             px:72.40,  rs:99.6, w:75, rsi:79, vr:0.75, drs:15.1, g:"Energía" },
+  { t:"CSCO",  nombre:"Cisco",             px:58.40,  rs:94.1, w:72, rsi:48, vr:0.55, drs:1.8,  g:"Tech"    },
+  { t:"VZ",    nombre:"Verizon",           px:43.20,  rs:88.3, w:68, rsi:52, vr:0.70, drs:3.4,  g:"Telecom" },
+  { t:"ABBV",  nombre:"AbbVie",            px:182.10, rs:85.2, w:65, rsi:49, vr:0.42, drs:1.1,  g:"Salud"   },
+  { t:"INTC",  nombre:"Intel",             px:22.10,  rs:78.4, w:32, rsi:35, vr:1.20, drs:-4.2, g:"Semis"   },
+  { t:"TSLA",  nombre:"Tesla",             px:285.10, rs:45.2, w:12, rsi:38, vr:0.80, drs:-8.1, g:"Autos"   },
+];
+
+// ─── SEÑALES ────────────────────────────────────────────────────────────────
+function calcSignal(d, p) {
+  if (d.w >= p.warrenMinBuy && d.rs >= p.rsMinBuy && d.rsi < p.rsiMaxBuy) return "BUY";
+  if (d.w >= p.warrenMinHold && d.rs >= p.rsMinHold)                       return "HOLD";
+  if (d.w < p.warrenSell || d.rs < p.rsMinSell)                            return "SELL";
+  return "WATCH";
+}
+
+// ─── SIZING ─────────────────────────────────────────────────────────────────
+function calcSizing(sig, capital, cash, slots, openSlots, price, params, pos) {
+  const capOp  = capital * (1 - params.capReserva - params.capMunicion);
+  const porSlot = capOp / slots;
+  const maxPos  = capital * params.maxConcentracion;
+  const r = { accion:"—", monto1:0, monto2:0, qty1:0, qty2:0, stopPrice:0, razon:"", urgencia:"low" };
+
+  if (sig === "BUY" && !pos) {
+    if (cash < price)     { r.accion="SIN CAPITAL"; r.razon="Efectivo insuficiente"; return r; }
+    if (openSlots <= 0)   { r.accion="SIN SLOT";    r.razon="Máx posiciones alcanzado"; return r; }
+    const total = Math.min(porSlot, maxPos, cash);
+    if (params.entradaEscalonada) {
+      r.monto1 = total*.5; r.monto2 = total*.5;
+      r.qty1   = Math.floor(r.monto1/price);
+      r.accion = "COMPRAR 50%";
+      r.razon  = `$${r.monto1.toFixed(0)} hoy · $${r.monto2.toFixed(0)} en 3-5 días`;
+    } else {
+      r.monto1 = total; r.qty1 = Math.floor(total/price);
+      r.accion = "COMPRAR 100%"; r.razon = `Entrada completa $${total.toFixed(0)}`;
+    }
+    r.stopPrice = +(price*(1+params.stopLoss)).toFixed(2);
+    r.urgencia  = "high";
+  } else if (sig === "BUY" && pos && pos.tranche === 1) {
+    const pp = (price-pos.entryPrice)/pos.entryPrice*100;
+    if (pp >= 0) {
+      r.accion="COMPLETAR 50%"; r.monto1=Math.min(pos.monto2,cash);
+      r.qty1=Math.floor(r.monto1/price); r.razon=`+${pp.toFixed(1)}% confirmado`; r.urgencia="high";
+    } else { r.accion="ESPERAR"; r.razon=`Precio bajo entrada ${pp.toFixed(1)}%`; r.urgencia="medium"; }
+  } else if (sig === "HOLD" && pos) {
+    const pp = (price-pos.entryPrice)/pos.entryPrice*100;
+    if (pp <= -7) { r.accion="ALERTA STOP"; r.razon=`Caída ${pp.toFixed(1)}%`; r.urgencia="high"; }
+    else { r.accion="MANTENER"; r.razon=`P&L ${pp.toFixed(1)}% · sin acción`; r.urgencia="low"; }
+  } else if (sig === "SELL" && pos) {
+    const pp = (price-pos.entryPrice)/pos.entryPrice*100;
+    if (pp >= 15) {
+      r.accion="VENDER 50% HOY"; r.monto1=price*pos.qty*.5; r.qty1=Math.floor(pos.qty*.5);
+      r.razon=`Ganancia grande ${pp.toFixed(1)}%`; r.urgencia="high";
+    } else {
+      r.accion="VENDER TODO"; r.monto1=price*pos.qty; r.qty1=pos.qty;
+      r.razon=`Señal SELL · P&L ${pp.toFixed(1)}%`; r.urgencia="high";
+    }
+  } else if (sig === "WATCH" && pos) {
+    const dias = pos.watchDias||0;
+    if (dias>=5) { r.accion="VENDER TODO"; r.qty1=pos.qty; r.monto1=price*pos.qty; r.razon="5 días WATCH → salida"; r.urgencia="high"; }
+    else { r.accion=`VIGILAR (${dias+1}/5)`; r.razon=`${5-dias} días para mejorar`; r.urgencia=dias>=3?"medium":"low"; }
+  } else if (!pos) {
+    r.accion = sig==="SELL"?"IGNORAR":sig==="WATCH"?"IGNORAR":"NO ENTRAR";
+    r.razon  = "Sin posición abierta";
+  }
+  return r;
+}
+
+// ─── HELPERS ────────────────────────────────────────────────────────────────
+const usd = n => `$${Math.abs(n).toLocaleString("en-US",{minimumFractionDigits:0,maximumFractionDigits:0})}`;
+const pct = (n,d=1) => `${n>=0?"+":""}${n.toFixed(d)}%`;
+const sc  = v => v>=80?C.green:v>=65?C.gold:C.red;
+const SCOL = { BUY:C.green, HOLD:C.gold, SELL:C.red, WATCH:C.muted };
+const SBGL = { BUY:`${C.green}18`, HOLD:`${C.gold}18`, SELL:`${C.red}18`, WATCH:C.border };
+const ACOL = a => a.includes("COMPRAR")||a.includes("COMPLETAR")?C.green:a.includes("VENDER")||a.includes("ALERTA")?C.red:a.includes("VIGILAR")?C.gold:C.muted;
+
+function Pip({color}){ return <span style={{display:"inline-block",width:7,height:7,borderRadius:"50%",background:color,boxShadow:`0 0 5px ${color}`,flexShrink:0}}/>; }
+function SBadge({s}){ return <span style={{fontSize:9,fontWeight:700,color:SCOL[s],background:SBGL[s],border:`1px solid ${SCOL[s]}33`,padding:"2px 7px",borderRadius:4,letterSpacing:1}}>{s}</span>; }
+function MiniBar({v,max=100,color=C.blue}){
+  return <div style={{background:C.border2,borderRadius:99,height:4,overflow:"hidden",flex:1}}>
+    <div style={{width:`${Math.min(v/max,1)*100}%`,height:"100%",borderRadius:99,background:color,boxShadow:`0 0 6px ${color}88`,transition:"width .6s"}}/>
+  </div>;
+}
+function Slider({label,val,min,max,step,set,fmt,color=C.blue}){
+  return <div style={{marginBottom:12}}>
+    <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
+      <span style={{fontSize:10,color:C.text}}>{label}</span>
+      <span style={{fontSize:10,color,fontWeight:700}}>{fmt?fmt(val):val}</span>
+    </div>
+    <input type="range" min={min} max={max} step={step} value={val}
+      onChange={e=>set(+e.target.value)}
+      style={{width:"100%",accentColor:color,height:3,cursor:"pointer"}}/>
+  </div>;
+}
+
+// ─── APP ────────────────────────────────────────────────────────────────────
+function App() {
+  const [tab,       setTab]       = useState("plan");
+  const [capital,   setCapital]   = useState(5000);
+  const [slots,     setSlots]     = useState(6);
+  const [positions, setPositions] = useState({});
+  const [history,   setHistory]   = useState([]);
+  const [log,       setLog]       = useState([]);
+  const [loaded,    setLoaded]    = useState(false);
+  const [flash,     setFlash]     = useState(null);
+  const [prices,    setPrices]    = useState(()=>Object.fromEntries(MARKET.map(d=>[d.t,d.px])));
+  const [params,    setParams]    = useState({
+    rsMinBuy:85, warrenMinBuy:75, rsiMaxBuy:70,
+    rsMinHold:75, warrenMinHold:65,
+    warrenSell:50, rsMinSell:60,
+    capReserva:0.20, capMunicion:0.20, maxConcentracion:0.25,
+    stopLoss:-0.08, entradaEscalonada:true,
+  });
+  const setP = (k,v) => setParams(p=>({...p,[k]:v}));
+
+  // Drift de precios cada 8s
+  useEffect(()=>{
+    const i=setInterval(()=>{
+      setPrices(p=>{const n={...p};Object.keys(n).forEach(k=>{n[k]=+(n[k]*(1+(Math.random()*.006-.003))).toFixed(2)});return n;});
+    },8000);
+    return()=>clearInterval(i);
+  },[]);
+
+  // Cargar desde localStorage
+  useEffect(()=>{
+    try {
+      const s=storage.get("wm_state");
+      if(s){const d=JSON.parse(s.value);
+        if(d.cash!==undefined) setCapital(d.capital||5000);
+        setPositions(d.positions||{});
+        setHistory(d.history||[]);
+        setLog(d.log||[]);
+      }
+    }catch(e){}
+    setLoaded(true);
+  },[]);
+
+  // Guardar en localStorage
+  useEffect(()=>{
+    if(!loaded) return;
+    storage.set("wm_state",JSON.stringify({capital,positions,history,log}));
+  },[capital,positions,history,log,loaded]);
+
+  const invested   = Object.entries(positions).reduce((s,[t,p])=>s+(prices[t]||p.entryPrice)*p.qty,0);
+  const cash       = useMemo(()=>{
+    const usado=Object.values(positions).reduce((s,p)=>s+p.entryPrice*p.qty,0);
+    return capital-usado;
+  },[capital,positions]);
+  const totalEquity = cash+invested;
+  const totalPnl    = totalEquity-capital;
+  const openSlots   = slots-Object.keys(positions).length;
+
+  const plan = useMemo(()=> MARKET.map(d=>{
+    const px=prices[d.t]||d.px;
+    const sig=calcSignal(d,params);
+    const pos=positions[d.t]||null;
+    const siz=calcSizing(sig,capital,cash,slots,openSlots,px,params,pos);
+    const pnl=pos?(px-pos.entryPrice)*pos.qty:null;
+    const pnlPct=pos?(px-pos.entryPrice)/pos.entryPrice*100:null;
+    return{...d,px,sig,siz,pos,pnl,pnlPct};
+  }).sort((a,b)=>{const o={BUY:0,HOLD:1,WATCH:2,SELL:3};return o[a.sig]-o[b.sig]||b.w-a.w;})
+  ,[prices,positions,params,cash,capital,slots,openSlots]);
+
+  const flashMsg = msg=>{setFlash(msg);setTimeout(()=>setFlash(null),3500);};
+  const addLog   = (tipo,ticker,qty,precio,total,pnl)=>{
+    setLog(l=>[{tipo,ticker,qty,precio,total,pnl,ts:new Date().toLocaleTimeString("es-CL",{hour:"2-digit",minute:"2-digit"})},...l].slice(0,60));
+  };
+
+  const execBuy = d=>{
+    const{siz,px}=d; const qty=siz.qty1;
+    if(!qty||qty<1||siz.monto1>cash){flashMsg("❌ Sin capital suficiente");return;}
+    const cost=qty*px; const pos=positions[d.t];
+    if(pos){
+      const avg=(pos.entryPrice*pos.qty+px*qty)/(pos.qty+qty);
+      setPositions(p=>({...p,[d.t]:{...pos,qty:pos.qty+qty,entryPrice:+avg.toFixed(4),tranche:2}}));
+    } else {
+      setPositions(p=>({...p,[d.t]:{qty,entryPrice:px,tranche:params.entradaEscalonada?1:2,
+        monto2:siz.monto2,stopPrice:siz.stopPrice,
+        entryDate:new Date().toLocaleDateString("es-CL"),
+        warrenEntry:d.w,rsEntry:d.rs}}));
+    }
+    addLog("BUY",d.t,qty,px,cost,null);
+    flashMsg(`✅ Compra ${d.t}: ${qty} acc × $${px.toFixed(2)} = ${usd(cost)}`);
+  };
+
+  const execSell = (d,parcial=false)=>{
+    const pos=positions[d.t]; if(!pos)return;
+    const px=prices[d.t]||pos.entryPrice;
+    const qty=parcial?Math.floor(pos.qty*.5):pos.qty;
+    const proceeds=px*qty; const pnl=(px-pos.entryPrice)*qty;
+    if(!parcial||qty===pos.qty){
+      setPositions(p=>{const n={...p};delete n[d.t];return n;});
+      setHistory(h=>[...h,{ticker:d.t,qty:pos.qty,entry:pos.entryPrice,exit:px,
+        pnl:+pnl.toFixed(2),pnlPct:+((px-pos.entryPrice)/pos.entryPrice*100).toFixed(2),
+        entryDate:pos.entryDate,exitDate:new Date().toLocaleDateString("es-CL")}]);
+    } else {
+      setPositions(p=>({...p,[d.t]:{...pos,qty:pos.qty-qty}}));
+    }
+    addLog("SELL",d.t,qty,px,proceeds,pnl);
+    flashMsg(`${pnl>=0?"✅":"🔴"} Venta ${d.t}: ${pnl>=0?"+":""}${usd(pnl)}`);
+  };
+
+  const resetAll=()=>{if(!confirm("¿Resetear portafolio?"))return;setPositions({});setHistory([]);setLog([]);flashMsg("♻️ Portafolio reseteado");};
+
+  const TABS=[["plan","🧠 PLAN"],["pos","📦 POSICIONES"],["cfg","⚙️ PARAMS"],["hist","📋 HISTORIAL"]];
+
+  return(
+    <div style={{fontFamily:"'JetBrains Mono',monospace",background:C.bg,minHeight:"100vh",color:C.text}}>
+    <style>{`
+      .card{background:${C.panel};border:1px solid ${C.border};border-radius:12px;padding:16px}
+      .card2{background:${C.panel2};border:1px solid ${C.border2};border-radius:10px;padding:12px}
+      .tabBtn{background:none;border:none;border-bottom:2px solid transparent;font-family:inherit;
+        font-size:10px;letter-spacing:1.5px;padding:11px 16px;cursor:pointer;transition:.2s;color:${C.dim}}
+      .tabBtn.on{border-bottom-color:${C.purple};color:${C.purple}}
+      .tabBtn:hover:not(.on){color:${C.text}}
+      .trow{border-bottom:1px solid ${C.border2};transition:background .12s}
+      .trow:hover{background:#0e0b1c;cursor:pointer}
+      .btn{border-radius:7px;padding:5px 12px;font-family:inherit;font-size:9px;letter-spacing:1px;cursor:pointer;transition:.2s;font-weight:700;border:1px solid}
+      .bg{background:${C.green}18;border-color:${C.green}44;color:${C.green}}
+      .bg:hover{background:${C.green}2c}
+      .br{background:${C.red}18;border-color:${C.red}44;color:${C.red}}
+      .br:hover{background:${C.red}2c}
+      .by{background:${C.gold}18;border-color:${C.gold}44;color:${C.gold}}
+      .bd{background:${C.border};border-color:transparent;color:${C.muted};cursor:not-allowed;opacity:.4}
+      @keyframes fadeUp{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+      .fu{animation:fadeUp .3s ease}
+      @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+      .lv{animation:pulse 2s infinite}
+      @keyframes sd{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:none}}
+      .fl{animation:sd .3s ease}
+    `}</style>
+
+    {/* FLASH */}
+    {flash&&<div className="fl" style={{position:"fixed",top:12,left:"50%",transform:"translateX(-50%)",
+      background:C.panel,border:`1px solid ${C.purple}66`,borderRadius:10,padding:"10px 20px",
+      fontSize:12,color:C.bright,zIndex:999,boxShadow:"0 4px 24px #000a",whiteSpace:"nowrap"}}>{flash}</div>}
+
+    {/* HEADER */}
+    <div style={{borderBottom:`1px solid ${C.border}`,padding:"10px 16px",display:"flex",
+      alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:8}}>
+      <div style={{display:"flex",alignItems:"center",gap:10}}>
+        <span className="lv" style={{width:8,height:8,borderRadius:"50%",background:C.purple,
+          display:"inline-block",boxShadow:`0 0 10px ${C.purple}`}}/>
+        <span style={{color:C.purple,fontWeight:700,fontSize:12,letterSpacing:2}}>WARREN MOMENTUM</span>
+        <span style={{background:`${C.gold}22`,color:C.gold,fontSize:8,border:`1px solid ${C.gold}44`,
+          padding:"2px 7px",borderRadius:4,letterSpacing:1}}>PAPER TRADING</span>
+      </div>
+      <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
+        {[
+          {l:"EFECTIVO",v:usd(cash),c:C.blue},
+          {l:"INVERTIDO",v:usd(invested),c:C.text},
+          {l:"P&L",v:`${totalPnl>=0?"+":""}${usd(totalPnl)}`,c:totalPnl>=0?C.green:C.red},
+          {l:"EQUITY",v:usd(totalEquity),c:C.bright},
+          {l:"SLOTS",v:`${Object.keys(positions).length}/${slots}`,c:C.gold},
+        ].map(k=>(
+          <div key={k.l} className="card" style={{padding:"6px 11px",textAlign:"center"}}>
+            <div style={{fontSize:12,fontWeight:700,color:k.c}}>{k.v}</div>
+            <div style={{fontSize:7,color:C.dim,letterSpacing:1.5}}>{k.l}</div>
+          </div>
+        ))}
+        <button className="btn br" onClick={resetAll}>↺</button>
+      </div>
+    </div>
+
+    {/* TABS */}
+    <div style={{borderBottom:`1px solid ${C.border}`,display:"flex",padding:"0 16px"}}>
+      {TABS.map(([id,lb])=><button key={id} className={`tabBtn ${tab===id?"on":""}`} onClick={()=>setTab(id)}>{lb}</button>)}
+    </div>
+
+    {/* ══ PLAN ═════════════════════════════════════════════════════════════ */}
+    {tab==="plan"&&(
+      <div className="fu" style={{padding:16}}>
+        {/* Capital summary */}
+        <div className="card" style={{marginBottom:14,display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}}>
+          <div>
+            <div style={{fontSize:8,color:C.dim,letterSpacing:2,marginBottom:10}}>DISTRIBUCIÓN CAPITAL</div>
+            {[
+              {l:"Reserva (no tocar)",v:capital*params.capReserva,c:C.muted,p:`${(params.capReserva*100).toFixed(0)}%`},
+              {l:"Posiciones activas",v:invested,c:C.blue,p:`${((invested/capital)*100).toFixed(1)}%`},
+              {l:"Libre para BUY",v:Math.max(0,cash-capital*params.capReserva-capital*params.capMunicion),c:C.green,p:`libre`},
+            ].map(k=>(
+              <div key={k.l} style={{marginBottom:8}}>
+                <div style={{display:"flex",justifyContent:"space-between",marginBottom:3}}>
+                  <span style={{fontSize:9,color:C.text}}>{k.l}</span>
+                  <span style={{fontSize:9,color:k.c,fontWeight:700}}>{usd(k.v)} ({k.p})</span>
+                </div>
+                <MiniBar v={k.v} max={capital} color={k.c}/>
+              </div>
+            ))}
+          </div>
+          <div>
+            <div style={{fontSize:8,color:C.dim,letterSpacing:2,marginBottom:10}}>SEÑALES HOY</div>
+            {["BUY","HOLD","WATCH","SELL"].map(s=>{
+              const n=plan.filter(d=>d.sig===s).length;
+              return(
+                <div key={s} style={{display:"flex",justifyContent:"space-between",alignItems:"center",
+                  padding:"5px 0",borderBottom:`1px solid ${C.border2}`}}>
+                  <div style={{display:"flex",gap:7,alignItems:"center"}}>
+                    <Pip color={SCOL[s]}/><span style={{fontSize:11,color:SCOL[s],fontWeight:700}}>{s}</span>
+                  </div>
+                  <span style={{fontSize:14,fontWeight:700,color:SCOL[s]}}>{n}</span>
+                </div>
+              );
+            })}
+            <div style={{marginTop:8,fontSize:9,color:C.dim}}>Slots libres: <span style={{color:C.gold}}>{openSlots}</span></div>
+          </div>
+        </div>
+
+        {/* Tabla */}
+        <div style={{overflowX:"auto"}}>
+          <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
+            <thead>
+              <tr style={{borderBottom:`2px solid ${C.border}`}}>
+                {["SEÑAL","TICKER","GRUPO","W","RS","PRECIO","ACCIÓN","MONTO","CANT.","STOP","RAZÓN","EJECUTAR"].map(h=>(
+                  <th key={h} style={{padding:"8px 9px",textAlign:"left",color:C.dim,fontSize:8,letterSpacing:1.5,fontWeight:600,whiteSpace:"nowrap"}}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {plan.map(d=>{
+                const{siz,sig,pos}=d;
+                const ac=siz.accion;
+                const canBuy=siz.qty1>0&&(ac.includes("COMPRAR")||ac.includes("COMPLETAR")||ac.includes("PROMEDIAR"));
+                const canSell=siz.qty1>0&&(ac.includes("VENDER"));
+                return(
+                  <tr key={d.t} className="trow">
+                    <td style={{padding:"9px 9px"}}><SBadge s={sig}/></td>
+                    <td style={{padding:"9px 9px"}}>
+                      <span style={{fontWeight:700,color:C.bright,fontSize:13}}>{d.t}</span>
+                      {pos&&<span style={{color:C.gold,fontSize:8,marginLeft:4}}>●</span>}
+                    </td>
+                    <td style={{padding:"9px 9px",color:C.muted,fontSize:9}}>{d.g}</td>
+                    <td style={{padding:"9px 9px"}}><span style={{color:sc(d.w),fontWeight:700}}>{d.w}</span></td>
+                    <td style={{padding:"9px 9px",color:C.green}}>{d.rs.toFixed(1)}</td>
+                    <td style={{padding:"9px 9px",color:C.blue,fontWeight:600}}>${d.px.toFixed(2)}</td>
+                    <td style={{padding:"9px 9px"}}><span style={{color:ACOL(ac),fontWeight:700,fontSize:10}}>{ac}</span></td>
+                    <td style={{padding:"9px 9px",color:C.text}}>{siz.monto1>0?usd(siz.monto1):"—"}</td>
+                    <td style={{padding:"9px 9px",color:C.text}}>{siz.qty1>0?`${siz.qty1}`:"—"}</td>
+                    <td style={{padding:"9px 9px",color:C.red,fontSize:10}}>{siz.stopPrice>0?`$${siz.stopPrice.toFixed(1)}`:"—"}</td>
+                    <td style={{padding:"9px 9px",color:C.muted,fontSize:9,maxWidth:160,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{siz.razon}</td>
+                    <td style={{padding:"9px 9px"}}>
+                      {canBuy&&<button className="btn bg" onClick={()=>execBuy(d)}>{ac.includes("COMPLETAR")?"COMPLETAR":"COMPRAR"}</button>}
+                      {canSell&&<button className="btn br" onClick={()=>execSell(d,ac.includes("50%"))}>{ac.includes("50%")?"VENDER 50%":"VENDER"}</button>}
+                      {!canBuy&&!canSell&&<span className="btn bd">{ac.includes("MANTENER")?"HOLD":"—"}</span>}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+        <div style={{marginTop:8,fontSize:8,color:C.dim}}>● = posición abierta · precios simulados cada 8s · stop loss: {(params.stopLoss*100).toFixed(0)}%</div>
+      </div>
+    )}
+
+    {/* ══ POSICIONES ════════════════════════════════════════════════════════ */}
+    {tab==="pos"&&(
+      <div className="fu" style={{padding:16}}>
+        {Object.keys(positions).length===0?(
+          <div style={{textAlign:"center",padding:60,color:C.dim}}>
+            <div style={{fontSize:36,marginBottom:10}}>📭</div>
+            <div style={{fontSize:13}}>Sin posiciones · ve al Plan y compra</div>
+          </div>
+        ):(
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(260px,1fr))",gap:10}}>
+            {Object.entries(positions).map(([ticker,pos])=>{
+              const px=prices[ticker]||pos.entryPrice;
+              const pnl=(px-pos.entryPrice)*pos.qty;
+              const pp=(px-pos.entryPrice)/pos.entryPrice*100;
+              const stopHit=px<=pos.stopPrice;
+              return(
+                <div key={ticker} className="card2" style={{borderLeft:`3px solid ${pp>=0?C.green:C.red}`,
+                  ...(stopHit?{borderColor:C.red,background:`${C.red}08`}:{})}}>
+                  <div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}>
+                    <span style={{fontSize:18,fontWeight:700,color:C.bright}}>{ticker}</span>
+                    <span style={{fontSize:10,color:C.dim}}>{pos.entryDate}</span>
+                  </div>
+                  {stopHit&&<div style={{background:`${C.red}18`,border:`1px solid ${C.red}44`,borderRadius:5,
+                    padding:"3px 8px",marginBottom:6,fontSize:8,color:C.red,fontWeight:700,letterSpacing:1}}>
+                    ⚠ STOP LOSS ACTIVADO
+                  </div>}
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,marginBottom:10}}>
+                    {[
+                      ["Entrada","$"+pos.entryPrice.toFixed(2),C.muted],
+                      ["Actual","$"+px.toFixed(2),C.blue],
+                      ["Cantidad",pos.qty+" acc",C.text],
+                      ["Valor",usd(px*pos.qty),C.text],
+                      ["P&L $",`${pnl>=0?"+":""}${usd(pnl)}`,pnl>=0?C.green:C.red],
+                      ["P&L %",pct(pp),pp>=0?C.green:C.red],
+                    ].map(([l,v,c])=>(
+                      <div key={l} style={{background:C.border2,borderRadius:6,padding:"5px 8px"}}>
+                        <div style={{fontSize:7,color:C.dim,letterSpacing:1}}>{l}</div>
+                        <div style={{fontSize:11,fontWeight:700,color:c}}>{v}</div>
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{fontSize:8,color:C.dim,marginBottom:8}}>
+                    Tranche: <span style={{color:pos.tranche===2?C.green:C.gold}}>
+                      {pos.tranche===2?"Completa":"50% · pendiente 2ª parte"}
+                    </span>
+                    {pos.stopPrice&&<span style={{color:C.red,float:"right"}}>Stop: ${pos.stopPrice.toFixed(1)}</span>}
+                  </div>
+                  <div style={{display:"flex",gap:6}}>
+                    <button className="btn by" style={{flex:1}} onClick={()=>execSell({t:ticker,px,sig:"SELL",pos},true)}>VENDER 50%</button>
+                    <button className="btn br" style={{flex:1}} onClick={()=>execSell({t:ticker,px,sig:"SELL",pos},false)}>VENDER TODO</button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    )}
+
+    {/* ══ PARAMS ════════════════════════════════════════════════════════════ */}
+    {tab==="cfg"&&(
+      <div className="fu" style={{padding:16,display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(260px,1fr))",gap:14}}>
+        <div className="card">
+          <div style={{fontSize:8,color:C.dim,letterSpacing:2,marginBottom:12}}>SEÑALES</div>
+          <Slider label="RS mín BUY"     val={params.rsMinBuy}     min={60} max={99} step={1} set={v=>setP("rsMinBuy",v)}     fmt={v=>`${v}`} color={C.green}/>
+          <Slider label="Warren mín BUY" val={params.warrenMinBuy} min={50} max={95} step={1} set={v=>setP("warrenMinBuy",v)} fmt={v=>`${v}`} color={C.green}/>
+          <Slider label="RSI máx BUY"    val={params.rsiMaxBuy}    min={60} max={80} step={1} set={v=>setP("rsiMaxBuy",v)}    fmt={v=>`${v}`} color={C.gold}/>
+          <Slider label="RS mín HOLD"    val={params.rsMinHold}    min={50} max={90} step={1} set={v=>setP("rsMinHold",v)}    fmt={v=>`${v}`} color={C.gold}/>
+          <Slider label="Warren SELL"    val={params.warrenSell}   min={20} max={65} step={1} set={v=>setP("warrenSell",v)}   fmt={v=>`${v}`} color={C.red}/>
+          <Slider label="RS mín SELL"    val={params.rsMinSell}    min={30} max={75} step={1} set={v=>setP("rsMinSell",v)}    fmt={v=>`${v}`} color={C.red}/>
+        </div>
+        <div className="card">
+          <div style={{fontSize:8,color:C.dim,letterSpacing:2,marginBottom:12}}>CAPITAL</div>
+          <Slider label="Capital USD"        val={capital}                min={500}  max={50000} step={500}  set={setCapital}              fmt={v=>usd(v)} color={C.blue}/>
+          <Slider label="Slots"              val={slots}                  min={2}    max={12}    step={1}    set={setSlots}                fmt={v=>`${v}`} color={C.purple}/>
+          <Slider label="Reserva"            val={params.capReserva}      min={0}    max={0.4}   step={0.05} set={v=>setP("capReserva",v)} fmt={v=>`${(v*100).toFixed(0)}%`} color={C.muted}/>
+          <Slider label="Munición"           val={params.capMunicion}     min={0}    max={0.4}   step={0.05} set={v=>setP("capMunicion",v)}fmt={v=>`${(v*100).toFixed(0)}%`} color={C.gold}/>
+          <Slider label="Máx por posición"   val={params.maxConcentracion}min={0.1}  max={0.5}   step={0.05} set={v=>setP("maxConcentracion",v)} fmt={v=>`${(v*100).toFixed(0)}%`} color={C.blue}/>
+          <Slider label="Stop Loss"          val={params.stopLoss}        min={-0.20}max={-0.03}  step={0.01} set={v=>setP("stopLoss",v)}  fmt={v=>`${(v*100).toFixed(0)}%`} color={C.red}/>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:8}}>
+            <span style={{fontSize:10,color:C.text}}>Entrada escalonada (50/50)</span>
+            <div onClick={()=>setP("entradaEscalonada",!params.entradaEscalonada)}
+              style={{width:30,height:17,borderRadius:99,background:params.entradaEscalonada?C.green:C.border,
+                cursor:"pointer",position:"relative",transition:".3s",flexShrink:0}}>
+              <div style={{position:"absolute",top:2,width:13,height:13,borderRadius:"50%",background:"#fff",
+                transition:".3s",left:params.entradaEscalonada?15:2}}/>
+            </div>
+          </div>
+        </div>
+        <div className="card">
+          <div style={{fontSize:8,color:C.dim,letterSpacing:2,marginBottom:12}}>REGLAS ACTIVAS</div>
+          {[
+            [`BUY: RS≥${params.rsMinBuy} + W≥${params.warrenMinBuy} + RSI<${params.rsiMaxBuy}`,C.green],
+            [`HOLD: RS≥${params.rsMinHold} + W≥${params.warrenMinHold}`,C.gold],
+            [`SELL: W<${params.warrenSell} o RS<${params.rsMinSell}`,C.red],
+            [`Stop loss: ${(params.stopLoss*100).toFixed(0)}%`,C.red],
+            [`Reserva: ${(params.capReserva*100).toFixed(0)}% intocable`,C.muted],
+            [`Máx por posición: ${(params.maxConcentracion*100).toFixed(0)}%`,C.blue],
+            [params.entradaEscalonada?"Entrada 50% hoy + 50% al confirmar":"Entrada 100% de una vez",C.purple],
+            [`${slots} posiciones máximas`,C.purple],
+          ].map(([r,c],i)=>(
+            <div key={i} style={{display:"flex",gap:7,alignItems:"flex-start",padding:"5px 0",borderBottom:`1px solid ${C.border2}`}}>
+              <Pip color={c}/><span style={{fontSize:9,color:C.text,lineHeight:1.5}}>{r}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    )}
+
+    {/* ══ HISTORIAL ════════════════════════════════════════════════════════ */}
+    {tab==="hist"&&(
+      <div className="fu" style={{padding:16,display:"grid",gridTemplateColumns:"1fr 1fr",gap:14}}>
+        <div>
+          <div style={{fontSize:8,color:C.dim,letterSpacing:2,marginBottom:8}}>TRADES CERRADOS</div>
+          {history.length===0?(
+            <div className="card" style={{textAlign:"center",color:C.muted,padding:28,fontSize:11}}>Sin trades cerrados</div>
+          ):(
+            <>
+              <div style={{display:"flex",gap:8,marginBottom:10}}>
+                {[
+                  {l:"P&L REAL",v:`${history.reduce((s,h)=>s+h.pnl,0)>=0?"+":""}${usd(history.reduce((s,h)=>s+h.pnl,0))}`,c:history.reduce((s,h)=>s+h.pnl,0)>=0?C.green:C.red},
+                  {l:"TRADES",v:history.length,c:C.blue},
+                  {l:"WIN%",v:`${Math.round(history.filter(h=>h.pnl>0).length/history.length*100)}%`,c:C.gold},
+                ].map(k=>(
+                  <div key={k.l} className="card2" style={{flex:1,textAlign:"center",padding:"8px"}}>
+                    <div style={{fontSize:14,fontWeight:700,color:k.c}}>{k.v}</div>
+                    <div style={{fontSize:7,color:C.dim,letterSpacing:1.5}}>{k.l}</div>
+                  </div>
+                ))}
+              </div>
+              {history.map((h,i)=>(
+                <div key={i} className="card2" style={{marginBottom:6,borderLeft:`3px solid ${h.pnl>=0?C.green:C.red}`}}>
+                  <div style={{display:"flex",justifyContent:"space-between"}}>
+                    <span style={{fontWeight:700,color:C.bright}}>{h.ticker}</span>
+                    <span style={{color:h.pnl>=0?C.green:C.red,fontWeight:700}}>{h.pnl>=0?"+":""}{usd(h.pnl)} ({pct(h.pnlPct)})</span>
+                  </div>
+                  <div style={{fontSize:8,color:C.dim,marginTop:2}}>{h.entryDate} → {h.exitDate} · ${h.entry?.toFixed(2)} → ${h.exit?.toFixed(2)}</div>
+                </div>
+              ))}
+            </>
+          )}
+        </div>
+        <div>
+          <div style={{fontSize:8,color:C.dim,letterSpacing:2,marginBottom:8}}>LOG DE ÓRDENES</div>
+          {log.length===0?(
+            <div className="card" style={{textAlign:"center",color:C.muted,padding:28,fontSize:11}}>Sin órdenes</div>
+          ):log.map((l,i)=>(
+            <div key={i} className="card2" style={{marginBottom:6,borderLeft:`3px solid ${l.tipo==="BUY"?C.green:C.red}`}}>
+              <div style={{display:"flex",justifyContent:"space-between",marginBottom:1}}>
+                <span style={{color:l.tipo==="BUY"?C.green:C.red,fontWeight:700,fontSize:11}}>{l.tipo} {l.ticker}</span>
+                <span style={{color:C.dim,fontSize:8}}>{l.ts}</span>
+              </div>
+              <div style={{fontSize:9,color:C.muted}}>
+                {l.qty} × ${l.precio?.toFixed(2)} = {usd(l.total)}
+                {l.pnl!=null&&<span style={{color:l.pnl>=0?C.green:C.red,marginLeft:6,fontWeight:700}}>P&L: {l.pnl>=0?"+":""}{usd(l.pnl)}</span>}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    )}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>
