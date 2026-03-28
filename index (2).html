@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Warren Dashboard</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{background:#07050f;font-family:'JetBrains Mono',monospace;color:#9d8fc0}
+    ::-webkit-scrollbar{width:3px;height:3px}
+    ::-webkit-scrollbar-track{background:#07050f}
+    ::-webkit-scrollbar-thumb{background:#1c1830;border-radius:3px}
+  </style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useMemo } = React;
+const API_URL = "https://blacoso.pythonanywhere.com/signals";
+const C = {
+  bg:"#07050f",panel:"#0d0b18",panel2:"#110f1e",border:"#1c1830",border2:"#130f22",
+  green:"#4ade80",blue:"#60a5fa",gold:"#fbbf24",red:"#f87171",purple:"#c084fc",
+  muted:"#4a4060",text:"#9d8fc0",bright:"#e2d9f3",dim:"#2d2545",
+};
+const SCOL={BUY:C.green,HOLD:C.gold,SELL:C.red,WATCH:C.muted};
+const SBGL={BUY:`${C.green}18`,HOLD:`${C.gold}18`,SELL:`${C.red}18`,WATCH:C.border};
+const sc=v=>v>=80?C.green:v>=65?C.gold:C.red;
+const usd=n=>`$${Math.abs(n).toLocaleString("en-US",{minimumFractionDigits:0,maximumFractionDigits:0})}`;
+const pct=(n,d=1)=>`${n>=0?"+":""}${n.toFixed(d)}%`;
+
+function Pip({color}){return <span style={{display:"inline-block",width:7,height:7,borderRadius:"50%",background:color,boxShadow:`0 0 5px ${color}`,flexShrink:0}}/>;}
+function SBadge({s}){return <span style={{fontSize:9,fontWeight:700,color:SCOL[s],background:SBGL[s],border:`1px solid ${SCOL[s]}33`,padding:"2px 7px",borderRadius:4,letterSpacing:1}}>{s}</span>;}
+function MiniBar({v,max=100,color=C.blue}){return <div style={{background:C.border2,borderRadius:99,height:4,overflow:"hidden",flex:1}}><div style={{width:`${Math.min(v/max,1)*100}%`,height:"100%",borderRadius:99,background:color,boxShadow:`0 0 6px ${color}88`,transition:"width .6s"}}/></div>;}
+
+function LoadingScreen({error}){
+  return <div style={{height:"100vh",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:16,color:C.muted}}>
+    {error?<>
+      <div style={{fontSize:32}}>⚠️</div>
+      <div style={{fontSize:12,color:C.red,textAlign:"center",maxWidth:400,padding:"0 20px"}}>{error}</div>
+      <div style={{fontSize:10,color:C.dim,textAlign:"center"}}>Verifica que warren_trader_v3.py esté corriendo en PythonAnywhere</div>
+    </>:<>
+      <div style={{width:36,height:36,border:`2px solid ${C.purple}`,borderTopColor:"transparent",borderRadius:"50%",animation:"spin 1s linear infinite"}}/>
+      <div style={{fontSize:12}}>Conectando a datos reales...</div>
+    </>}
+    <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+  </div>;
+}
+
+function App(){
+  const [data,setData]=useState(null);
+  const [error,setError]=useState(null);
+  const [loading,setLoading]=useState(true);
+  const [tab,setTab]=useState("plan");
+
+  const fetchData=async()=>{
+    try{
+      const r=await fetch(API_URL+"?t="+Date.now());
+      if(!r.ok) throw new Error(`HTTP ${r.status}`);
+      const d=await r.json();
+      setData(d);setError(null);
+    }catch(e){setError(`No se pudo conectar:\n${e.message}`);}
+    finally{setLoading(false);}
+  };
+
+  useEffect(()=>{fetchData();const i=setInterval(fetchData,5*60*1000);return()=>clearInterval(i);},[]);
+
+  if(loading) return <LoadingScreen/>;
+  if(error&&!data) return <LoadingScreen error={error}/>;
+
+  const tickers=data?.tickers||[];
+  const posData=data?.posiciones||{};
+  const capital=data?.capital||5000;
+  const equity=data?.equity||capital;
+  const cash=data?.cash||capital;
+  const pnlTotal=data?.pnl_total||0;
+  const nPos=data?.n_posiciones||0;
+  const maxPos=data?.max_posiciones||6;
+  const actualizado=data?.actualizado||"—";
+  const trades=data?.trades_cerrados||[];
+  const bySignal=s=>tickers.filter(t=>t.signal===s).length;
+
+  return <div style={{fontFamily:"'JetBrains Mono',monospace",background:C.bg,minHeight:"100vh",color:C.text}}>
+  <style>{`
+    .card{background:${C.panel};border:1px solid ${C.border};border-radius:12px;padding:14px}
+    .card2{background:${C.panel2};border:1px solid ${C.border2};border-radius:10px;padding:12px}
+    .tabBtn{background:none;border:none;border-bottom:2px solid transparent;font-family:inherit;font-size:10px;letter-spacing:1.5px;padding:11px 16px;cursor:pointer;transition:.2s;color:${C.dim}}
+    .tabBtn.on{border-bottom-color:${C.purple};color:${C.purple}}
+    .tabBtn:hover:not(.on){color:${C.text}}
+    .trow{border-bottom:1px solid ${C.border2};transition:background .12s}
+    .trow:hover{background:#0e0b1c}
+    @keyframes fadeUp{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+    .fu{animation:fadeUp .3s ease}
+    @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+    .lv{animation:pulse 2s infinite}
+  `}</style>
+
+  {/* HEADER */}
+  <div style={{borderBottom:`1px solid ${C.border}`,padding:"10px 16px",display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:8}}>
+    <div style={{display:"flex",alignItems:"center",gap:10}}>
+      <span className="lv" style={{width:8,height:8,borderRadius:"50%",background:C.green,display:"inline-block",boxShadow:`0 0 10px ${C.green}`}}/>
+      <span style={{color:C.green,fontWeight:700,fontSize:12,letterSpacing:2}}>WARREN MOMENTUM</span>
+      <span style={{background:`${C.blue}22`,color:C.blue,fontSize:8,border:`1px solid ${C.blue}44`,padding:"2px 7px",borderRadius:4,letterSpacing:1}}>DATOS REALES</span>
+      <span style={{fontSize:9,color:C.dim}}>↻ {actualizado}</span>
+    </div>
+    <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+      {[{l:"EFECTIVO",v:usd(cash),c:C.blue},{l:"P&L",v:`${pnlTotal>=0?"+":""}${usd(pnlTotal)}`,c:pnlTotal>=0?C.green:C.red},{l:"EQUITY",v:usd(equity),c:C.bright},{l:"SLOTS",v:`${nPos}/${maxPos}`,c:C.gold}].map(k=>(
+        <div key={k.l} className="card" style={{padding:"6px 11px",textAlign:"center"}}>
+          <div style={{fontSize:12,fontWeight:700,color:k.c}}>{k.v}</div>
+          <div style={{fontSize:7,color:C.dim,letterSpacing:1.5}}>{k.l}</div>
+        </div>
+      ))}
+      <button onClick={fetchData} style={{background:C.border,border:`1px solid ${C.muted}44`,color:C.text,borderRadius:7,padding:"6px 12px",cursor:"pointer",fontSize:10,fontFamily:"inherit"}}>↺</button>
+    </div>
+  </div>
+
+  {/* TABS */}
+  <div style={{borderBottom:`1px solid ${C.border}`,display:"flex",padding:"0 16px"}}>
+    {[["plan","📡 SEÑALES"],["pos","📦 POSICIONES"],["hist","📋 HISTORIAL"]].map(([id,lb])=>
+      <button key={id} className={`tabBtn ${tab===id?"on":""}`} onClick={()=>setTab(id)}>{lb}</button>
+    )}
+  </div>
+
+  {/* SEÑALES */}
+  {tab==="plan"&&<div className="fu" style={{padding:16}}>
+    <div className="card" style={{marginBottom:14,display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}}>
+      <div>
+        <div style={{fontSize:8,color:C.dim,letterSpacing:2,marginBottom:10}}>SEÑALES HOY</div>
+        {["BUY","HOLD","WATCH","SELL"].map(s=>(
+          <div key={s} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"5px 0",borderBottom:`1px solid ${C.border2}`}}>
+            <div style={{display:"flex",gap:7,alignItems:"center"}}><Pip color={SCOL[s]}/><span style={{fontSize:11,color:SCOL[s],fontWeight:700}}>{s}</span></div>
+            <span style={{fontSize:14,fontWeight:700,color:SCOL[s]}}>{bySignal(s)}</span>
+          </div>
+        ))}
+      </div>
+      <div>
+        <div style={{fontSize:8,color:C.dim,letterSpacing:2,marginBottom:10}}>CAPITAL</div>
+        {[{l:"Posiciones",v:equity-cash,c:C.blue},{l:"Efectivo",v:cash,c:C.green}].map(k=>(
+          <div key={k.l} style={{marginBottom:8}}>
+            <div style={{display:"flex",justifyContent:"space-between",marginBottom:3}}>
+              <span style={{fontSize:9,color:C.text}}>{k.l}</span>
+              <span style={{fontSize:9,color:k.c,fontWeight:700}}>{usd(k.v)}</span>
+            </div>
+            <MiniBar v={k.v} max={equity} color={k.c}/>
+          </div>
+        ))}
+      </div>
+    </div>
+    <div style={{overflowX:"auto"}}>
+      <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
+        <thead>
+          <tr style={{borderBottom:`2px solid ${C.border}`}}>
+            {["SEÑAL","TICKER","WARREN","RS","RSI","ΔRS","PRECIO","VOL REL","EMA200","SMA50"].map(h=>(
+              <th key={h} style={{padding:"8px 9px",textAlign:"left",color:C.dim,fontSize:8,letterSpacing:1.5,fontWeight:600,whiteSpace:"nowrap"}}>{h}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {tickers.map(d=>(
+            <tr key={d.ticker} className="trow">
+              <td style={{padding:"9px 9px"}}><SBadge s={d.signal}/></td>
+              <td style={{padding:"9px 9px"}}>
+                <span style={{fontWeight:700,color:C.bright,fontSize:13}}>{d.ticker}</span>
+                {posData[d.ticker]&&<span style={{color:C.gold,fontSize:8,marginLeft:4}}>●</span>}
+              </td>
+              <td style={{padding:"9px 9px"}}><span style={{color:sc(d.warren),fontWeight:700}}>{d.warren}</span></td>
+              <td style={{padding:"9px 9px",color:C.green}}>{d.rs?.toFixed(1)}</td>
+              <td style={{padding:"9px 9px",color:d.rsi>70?C.gold:d.rsi<40?C.red:C.text}}>{d.rsi?.toFixed(1)}</td>
+              <td style={{padding:"9px 9px",color:d.delta_rs>5?C.green:d.delta_rs<0?C.red:C.muted,fontWeight:d.delta_rs>8?700:400}}>
+                {d.delta_rs>0?"▲":d.delta_rs<0?"▼":"—"}{Math.abs(d.delta_rs||0).toFixed(1)}
+              </td>
+              <td style={{padding:"9px 9px",color:C.blue,fontWeight:600}}>${d.precio?.toFixed(2)}</td>
+              <td style={{padding:"9px 9px",color:d.vol_rel>1.2?C.red:d.vol_rel>1?C.gold:C.muted}}>{d.vol_rel?.toFixed(2)}x</td>
+              <td style={{padding:"9px 9px",textAlign:"center",color:d.ema200?C.green:C.red}}>{d.ema200?"✓":"✗"}</td>
+              <td style={{padding:"9px 9px",textAlign:"center",color:d.sma50?C.green:C.red}}>{d.sma50?"✓":"✗"}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+    <div style={{marginTop:8,fontSize:8,color:C.dim}}>● = posición abierta · datos reales Yahoo Finance · auto-refresh 5 min</div>
+  </div>}
+
+  {/* POSICIONES */}
+  {tab==="pos"&&<div className="fu" style={{padding:16}}>
+    {Object.keys(posData).length===0?(
+      <div style={{textAlign:"center",padding:60,color:C.dim}}>
+        <div style={{fontSize:36,marginBottom:10}}>📭</div>
+        <div style={{fontSize:12}}>Sin posiciones · el Python abre automáticamente los BUY</div>
+      </div>
+    ):(
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(260px,1fr))",gap:10}}>
+        {Object.entries(posData).map(([ticker,pos])=>{
+          const pp=pos.pnl_pct||0;const pnl=pos.pnl||0;
+          return <div key={ticker} className="card2" style={{borderLeft:`3px solid ${pp>=0?C.green:C.red}`}}>
+            <div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}>
+              <span style={{fontSize:18,fontWeight:700,color:C.bright}}>{ticker}</span>
+              <span style={{fontSize:9,color:C.dim}}>{pos.entry_date}</span>
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,marginBottom:8}}>
+              {[["Entrada","$"+(pos.entry_price||0).toFixed(2),C.muted],["Actual","$"+(pos.precio_actual||0).toFixed(2),C.blue],
+                ["Cantidad",(pos.qty||0)+" acc",C.text],["Valor",usd((pos.precio_actual||0)*(pos.qty||0)),C.text],
+                ["P&L $",`${pnl>=0?"+":""}${usd(pnl)}`,pnl>=0?C.green:C.red],["P&L %",pct(pp),pp>=0?C.green:C.red]
+              ].map(([l,v,c])=>(
+                <div key={l} style={{background:C.border2,borderRadius:6,padding:"5px 8px"}}>
+                  <div style={{fontSize:7,color:C.dim}}>{l}</div>
+                  <div style={{fontSize:11,fontWeight:700,color:c}}>{v}</div>
+                </div>
+              ))}
+            </div>
+            <div style={{fontSize:8,color:C.dim}}>W:{pos.entry_warren} · RS:{pos.entry_rs}</div>
+          </div>;
+        })}
+      </div>
+    )}
+  </div>}
+
+  {/* HISTORIAL */}
+  {tab==="hist"&&<div className="fu" style={{padding:16}}>
+    {trades.length===0?(
+      <div style={{textAlign:"center",padding:60,color:C.dim,fontSize:12}}>Sin trades cerrados aún</div>
+    ):<>
+      <div style={{display:"flex",gap:8,marginBottom:14,flexWrap:"wrap"}}>
+        {[{l:"P&L REAL",v:`${trades.reduce((s,h)=>s+h.pnl,0)>=0?"+":""}${usd(trades.reduce((s,h)=>s+h.pnl,0))}`,c:trades.reduce((s,h)=>s+h.pnl,0)>=0?C.green:C.red},
+          {l:"TRADES",v:trades.length,c:C.blue},{l:"WIN%",v:`${Math.round(trades.filter(h=>h.pnl>0).length/trades.length*100)}%`,c:C.gold}
+        ].map(k=>(
+          <div key={k.l} className="card2" style={{flex:1,textAlign:"center",padding:"8px"}}>
+            <div style={{fontSize:15,fontWeight:700,color:k.c}}>{k.v}</div>
+            <div style={{fontSize:8,color:C.dim,letterSpacing:1.5}}>{k.l}</div>
+          </div>
+        ))}
+      </div>
+      {[...trades].reverse().map((h,i)=>(
+        <div key={i} className="card2" style={{marginBottom:6,borderLeft:`3px solid ${h.pnl>=0?C.green:C.red}`}}>
+          <div style={{display:"flex",justifyContent:"space-between"}}>
+            <span style={{fontWeight:700,color:C.bright}}>{h.ticker}</span>
+            <span style={{color:h.pnl>=0?C.green:C.red,fontWeight:700}}>{h.pnl>=0?"+":""}{usd(h.pnl)} ({pct(h.pnl_pct)})</span>
+          </div>
+          <div style={{fontSize:9,color:C.dim,marginTop:2}}>{h.date} · ${h.entry?.toFixed(2)} → ${h.exit?.toFixed(2)}</div>
+        </div>
+      ))}
+    </>}
+  </div>}
+  </div>;
+}
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>
